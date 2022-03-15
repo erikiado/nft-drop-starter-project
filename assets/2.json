@@ -1,12 +1,12 @@
 {
   "name": "mon92",
   "symbol": "",
-  "image": "2.png",
+  "image": "2.jpg",
   "properties": {
     "files": [
       {
-        "uri": "2.png",
-        "type": "image/png"
+        "uri": "2.jpg",
+        "type": "image/jpg"
       }
     ],
     "creators": [
