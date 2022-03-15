@@ -1,8 +1,11 @@
 import React, { useEffect, useState } from 'react';
+import axios from 'axios';
 import { Connection, PublicKey } from '@solana/web3.js';
 import { Program, Provider, web3 } from '@project-serum/anchor';
 import { MintLayout, TOKEN_PROGRAM_ID, Token } from '@solana/spl-token';
+import * as metadata from "@metaplex-foundation/mpl-token-metadata";
 import { sendTransactions } from './connection';
+import bs58 from 'bs58';
 import './CandyMachine.css';
 import {
   candyMachineProgram,
@@ -20,13 +23,77 @@ const opts = {
   preflightCommitment: 'processed',
 };
 
+const MAX_NAME_LENGTH = 32;
+const MAX_URI_LENGTH = 200;
+const MAX_SYMBOL_LENGTH = 10;
+const MAX_CREATOR_LEN = 32 + 1 + 1;
+const MAX_CREATOR_LIMIT = 5;
+const MAX_DATA_SIZE = 4 + MAX_NAME_LENGTH + 4 + MAX_SYMBOL_LENGTH + 4 + MAX_URI_LENGTH + 2 + 1 + 4 + MAX_CREATOR_LIMIT * MAX_CREATOR_LEN;
+const MAX_METADATA_LEN = 1 + 32 + 32 + MAX_DATA_SIZE + 1 + 1 + 9 + 172;
+const CREATOR_ARRAY_START = 1 + 32 + 32 + 4 + MAX_NAME_LENGTH + 4 + MAX_URI_LENGTH + 4 + MAX_SYMBOL_LENGTH + 2 + 1 + 4;
+
+
 const CandyMachine = ({ walletAddress }) => {
   
   const [candyMachine, setCandyMachine] = useState(null);
+  const [candyMachineCreator, setCandyMachineCreator] = useState(null);
   const [mints, setMints] = useState([]);
-  const [isLoadingMints, setIsLoadingMints] = useState(false);
-  const [renderMintedItems, setRenderMintedItems] = useState(false);
+  const [mintAddresses, setMintAddresses] = useState([]);
+  const [isLoadingMints, setIsLoadingMints] = useState(true);
+  // const [renderMintedItems, setRenderMintedItems] = useState(false);
   
+  // useEffect(async () => {
+  //   if (!mintAddresses || mintAddresses.length == 0) {
+  //     return;
+  //   }
+  //   // const provider = getProvider();
+  //   // const candyMachineCreator = await getCandyMachineCreator(process.env.REACT_APP_CANDY_MACHINE_ID);
+  //   // const currentMints = await getMintAddresses(candyMachineCreator[0], provider);
+  //   console.log('mintAddresses');
+  //   console.log(mintAddresses);
+  //   const provider = getProvider();
+  //   const publicKey = mintAddresses[0];
+  //   // let nftsmetadata = await metadata.Metadata.findByOwnerV3(provider.connection, process.env.REACT_APP_CANDY_MACHINE_ID);
+  //   let nftsmetadata = await metadata.Metadata.findByMint(provider.connection, publicKey);
+  //   // console.log('nftsmetadata');
+  //   // console.log(nftsmetadata);
+  //   // let nftsmetadata = await metadata.Metadata.findByOwnerV2(provider.connection, '9fDnPtVWxCuU5orsuYQwciW2exBUG48vjivPCsGga7qg');
+  //   console.log('nftsmetadata');
+  //   console.log(nftsmetadata);
+  //   // setMints(mintAddresses);
+
+  // }, [mintAddresses]);	
+
+  useEffect(async () => {
+    if (!candyMachine && !isLoadingMints) {
+      console.log('returned');
+      return;
+    }
+    console.log('started');
+    const provider = getProvider();
+    const [cmCreator, creatorBump] = await getCandyMachineCreator(process.env.REACT_APP_CANDY_MACHINE_ID);
+    let nftsmetadata = await metadata.Metadata.findMany(provider.connection, {creators: [cmCreator]});
+    let endpoints = nftsmetadata.map((md) => md.data.data.uri);
+    let nft_asset_urls = await axios.all(endpoints.map((endpoint) => axios.get(endpoint))).then(
+      (data) => {
+        let image_urls = data.map(d => d.data.image);
+        return image_urls;
+      },
+    );
+    for (let i = 0; i < nftsmetadata.length; i++) {
+      nftsmetadata[i].data.data.image = nft_asset_urls[i];
+      // console.log(nftsmetadata[i]);
+      // console.log(nft_asset_urls[i]);
+    }
+    // nftsmetadata.map((md) => md.data.data.uri);
+    setCandyMachineCreator(cmCreator);
+    setMints(nftsmetadata);
+    setIsLoadingMints(false);
+    console.log('finished');
+
+    // const currentMints = await getMintAddresses(candyMachineCreator, provider);
+    // setMintAddresses(currentMints);
+  }, [candyMachine]);	
 
   useEffect(() => {
     getCandyMachineState();
@@ -54,7 +121,7 @@ const CandyMachine = ({ walletAddress }) => {
     const candyMachine = await program.account.candyMachine.fetch(
       process.env.REACT_APP_CANDY_MACHINE_ID
     );
-    
+    // console.log(candyMachine.data)
     const itemsAvailable = candyMachine.data.itemsAvailable.toNumber();
     const itemsRedeemed = candyMachine.itemsRedeemed.toNumber();
     const itemsRemaining = itemsAvailable - itemsRedeemed;
@@ -148,6 +215,33 @@ const CandyMachine = ({ walletAddress }) => {
         TOKEN_METADATA_PROGRAM_ID
       )
     )[0];
+  };
+
+  const getMintAddresses = async (firstCreatorAddress, provider) => {
+    const metadataAccounts = await provider.connection.getProgramAccounts(
+      TOKEN_METADATA_PROGRAM_ID,
+      {
+        // The mint address is located at byte 33 and lasts for 32 bytes.
+        dataSlice: { offset: 33, length: 32 },
+  
+        filters: [
+          // Only get Metadata accounts.
+          { dataSize: MAX_METADATA_LEN },
+  
+          // Filter using the first creator.
+          {
+            memcmp: {
+              offset: CREATOR_ARRAY_START,
+              bytes: firstCreatorAddress.toBase58(),
+            },
+          },
+        ],
+      },
+    );
+  
+    return metadataAccounts.map((metadataAccountInfo) => (
+      bs58.encode(metadataAccountInfo.account.data)
+    ));
   };
   
   const createAssociatedTokenAccountInstruction = (
@@ -350,7 +444,6 @@ const CandyMachine = ({ walletAddress }) => {
     const [candyMachineCreator, creatorBump] = await getCandyMachineCreator(
       candyMachineAddress,
     );
-  
     instructions.push(
       await candyMachine.program.instruction.mintNft(creatorBump, {
         accounts: {
@@ -406,6 +499,24 @@ const renderDropTimer = () => {
 
   // Else let's just return the current drop date
   return <p>{`Drop Date: ${candyMachine.state.goLiveDateTimeString}`}</p>;
+};
+
+// Create render function
+const renderMintedItems = () => {
+  // Get the current date and dropDate in a JavaScript Date object
+  console.log(mints);
+  return <ul className="minted-list">
+    {mints.map(({_id, data}) => {
+      const nftdata = data.data;
+      return (
+        <li key={_id}>
+          <p>0x{nftdata.symbol} // name: {nftdata.name}</p>
+          <img src={nftdata.image} width="300" height="300"></img>
+          <p className="mint-address">0x: {data.mint}</p>
+        </li>
+      );
+    })}
+    </ul>;
 };
 
 return (

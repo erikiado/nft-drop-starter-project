@@ -31,3 +31,18 @@
   border-radius: 10px;
   object-fit: cover;
 }
+
+
+.minted-list {
+  flex-direction: row;
+  display: flex;
+  list-style-type: none;
+}
+
+.minted-list li {
+  width: 350px;
+}
+
+.mint-address {
+  font-size: 0.6em;
+}
